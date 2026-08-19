@@ -1,0 +1,4 @@
+import random
+cards = ['J', 'J', 'Q', 'Q', 'K', 'K']
+random.shuffle(cards)
+print(cards)
