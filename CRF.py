@@ -1,15 +1,21 @@
 import random
+import numpy as np
 class Node:
-    infoset: str = ''
+    infoset: str
     n_actions: int
-    regret_sum: list[float] = []
-    strategy: list[float] = []
-    strategy_sum: list[float] = []
-    def __init__(self, infoset: str, n_actions: int) -> None:
-        self.n_actions = n_actions
+    regret_sum: np.ndarray
+    strategy: np.ndarray
+    strategy_sum: np.ndarray
+
+    def __init__(self, infoset, legal_actions) -> None:
+        self.n_actions = len(legal_actions)
+        self.legal_actions = legal_actions
         self.infoset = infoset
-        
-    def get_strategy(self, relizationWeight: float) -> list[float]:
+        self.regret_sum = np.zeros(self.n_actions)
+        self.strategy_sum = np.zeros(self.n_actions)
+        self.strategy = np.zeros(self.n_actions)
+
+    def get_strategy(self, relizationWeight: float) -> np.ndarray:
         normalized_sum: float = 0
         for i in range(self.n_actions):
             self.strategy[i] = self.regret_sum[i] if self.regret_sum[i] > 0 else 0
@@ -32,15 +38,14 @@ class Node:
         return avg_strategy
     
 class CFR:
-    CHEKC: str = 'c' #pasar si nadie apuesta
+    CHEKC_CALL: str = 'c' #pasar si nadie apuesta o igualar la apuesta
     BET: str = 'b' #apostar
-    CALL: str = 'ca' #igualar la apuesta
     RAISE: str = 'r'
     FOLD: str = 'f' #retirarse
     BETS: tuple[int, int] = (2, 4)
     node_map: dict[str, Node]
     DECK = ['J', 'J', 'Q', 'Q', 'K', 'K']
-
+    RANKS = {'J': 0, 'Q': 1, 'K': 2}
     def __solve_winner(self, cards):
         if cards[0] == cards[2]:
             return 0
@@ -49,63 +54,98 @@ class CFR:
         elif cards[0] == cards[1]:
             return -1
         else:
-            return 0 if cards[0] > cards[1] else 1
-            
-            
-            
-            
-    def __cfr(self, cards: list[str], history: str, p0: float, p1: float) -> float:
+            return 0 if self.RANKS[cards[0]] > self.RANKS[cards[1]] else 1            
+    
+    def __legal_actions(self, history: str) -> tuple[str, ...]:
         last_round = history.split('/')[-1]
-        to_move:int = len(last_round) % 2
-        loser: int = 1 - to_move
+        if last_round and last_round[-1] in (self.BET, self.RAISE):
+            if last_round[-1] == self.RAISE:
+                return (self.FOLD, self.CHEKC_CALL)
+            return (self.FOLD, self.CHEKC_CALL, self.RAISE)
+        return (self.CHEKC_CALL, self.BET)
+    
+    def __terminal_unit(self, history, to_move, cards = None):
+        rounds: str = history.split('/')
+        last_round: str = rounds[-1]
+        
         loser_count: int = 1
         winner_count: int = 1
+        for r, round in enumerate(rounds):
+            for i, ch in enumerate(round):
+                if ch == self.BET or ch == self.RAISE:
+                    if i%2 == to_move:
+                        winner_count = loser_count + self.BETS[r]
+                    else:
+                        loser_count = winner_count + self.BETS[r]
+                if ch == self.CHEKC_CALL:
+                    if i%2 == to_move:
+                        winner_count = loser_count
+                    else:
+                        loser_count = winner_count
         if history.endswith(self.FOLD):
-            for r, round in enumerate(history.split('/')):
-                for i, ch in enumerate(round):
-                    if ch == self.BET or ch == self.RAISE:
-                        if i%2 == to_move:
-                            winner_count = loser_count + self.BETS[r]
-                        else:
-                            loser_count = winner_count + self.BETS[r]
-                    if ch == self.CALL:
-                        if i%2 == to_move:
-                            winner_count = loser_count
-                        else:
-                            loser_count = winner_count
-            return loser_count
-        elif history.split('/')[-1].endswith(self.CHEKC+self.CHEKC) and len(history.split('/')) > 1:
+            return (True, loser_count)
+        elif len(rounds) > 1 and len(last_round) >= 2 and last_round.endswith(self.CHEKC_CALL):
             winner = self.__solve_winner(cards)
             if winner == -1:
-                return 0
-            for r, round in enumerate(history.split('/')):
-                for i, ch in enumerate(round):
-                    if ch == self.BET or ch == self.RAISE:
-                        if i%2 == to_move:
-                            winner_count = loser_count + self.BETS[r]
-                        else:
-                            loser_count = winner_count + self.BETS[r]
-                    if ch == self.CALL:
-                        if i%2 == to_move:
-                            winner_count = loser_count
-                        else:
-                            loser_count = winner_count
+                return (True, 0)
+            return (True, loser_count) if winner == to_move else (True, -loser_count)
+        return (False, None)
+    
+    def __round_closes(self, history: str, action: str) -> bool:
+        last_round:str = history.split('/')[-1]
+        return action == self.CHEKC_CALL and last_round != ''
             
-            return loser_count if winner == to_move else -loser_count
-            
-        
                     
+    def __cfr(self, cards: list[str], history: str, p0: float, p1: float) -> float:
+        last_round: str = history.split('/')[-1]
+        to_move: int = len(last_round) % 2
+        finished, result = self.__terminal_unit(history, to_move, cards)
+        if finished:
+            return result #type: ignore
+            
+        carta_juagdor = cards[to_move]
+        if len(history.split('/')) > 1:
+            infoset = carta_juagdor + cards[-1] + '|' + history
+        else: 
+            infoset = carta_juagdor + '|' + history 
+        
+        node: Node = self.node_map.get(infoset) #type: ignore
+        if node is None:
+            node: Node = Node(infoset, self.__legal_actions(history))
+            self.node_map[infoset] = node
+            
+        strategy: np.ndarray = node.get_strategy(p0 if to_move == 0 else p1)
+        util: np.ndarray = np.zeros(node.n_actions)
+        node_util: float = 0
+        
+        for i, action in enumerate(node.legal_actions):
+            next_h = history + action 
+            if self.__round_closes(history, action) and len(history.split('/')) == 1:
+                next_h += '/'
+            hijo_to_move = len(next_h.split('/')[-1]) % 2
+            if to_move == 0:
+                aux = self.__cfr(cards, next_h, p0 * strategy[i], p1)
+            else:
+                aux = self.__cfr(cards, next_h, p0, p1 * strategy[i])
+            util[i] = -aux if hijo_to_move != to_move else aux  
+            node_util += strategy[i]* util[i]
+        for i in range (node.n_actions):
+            regret: float = util[i] - node_util
+            node.regret_sum[i] += (p1 if to_move == 0 else p0) * regret
+        return node_util  
+        
     def train(self, iterations:int):
         random.seed()
         util: float = 0
-        for i in range (iterations):
-            random.shuffle(self.DECK)
-            cards = random.sample(self.DECK, 3)
+        for _ in range (iterations):
+            cards: list[str] = random.sample(self.DECK, 3)
             util += self.__cfr(cards, '', 1, 1)
         print(f"Media de valor por iteración: {util / iterations}")
         for node in self.node_map.values():
-            print(node.infoset)
-        
+            print(node.get_average_strategy())
+    
+    def __init__(self) -> None:
+        self.node_map = {}
     
                     
         
