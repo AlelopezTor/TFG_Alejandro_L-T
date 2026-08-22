@@ -70,8 +70,8 @@ class CFR:
         
         loser_count: int = 1
         winner_count: int = 1
-        for r, round in enumerate(rounds):
-            for i, ch in enumerate(round):
+        for r, rnd in enumerate(rounds):
+            for i, ch in enumerate(rnd):
                 if ch == self.BET or ch == self.RAISE:
                     if i%2 == to_move:
                         winner_count = loser_count + self.BETS[r]
@@ -140,9 +140,10 @@ class CFR:
         for _ in range (iterations):
             cards: list[str] = random.sample(self.DECK, 3)
             util += self.__cfr(cards, '', 1, 1)
-        print(f"Media de valor por iteración: {util / iterations}")
-        for node in self.node_map.values():
-            print(node.get_average_strategy())
+        print(f"Media de valor por iteración: {util / iterations:.5f}")
+        for infoset in sorted(self.node_map):
+            node = self.node_map[infoset]
+            print(infoset, node.legal_actions, node.get_average_strategy())
     
     def __init__(self) -> None:
         self.node_map = {}
